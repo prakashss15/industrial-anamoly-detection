@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Industrial Digital Twin Dashboard</title>
+
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg1:#0f172a;
+      --bg2:#1e293b;
+      --text:#e2e8f0;
+      --brand1:#7c3aed;
+      --brand2:#06b6d4;
+
+      --normal:#22c55e;
+      --medium:#facc15;
+      --critical:#fca5a5;
+    }
+
+    body {
+      margin:0;
+      font-family:'Inter',sans-serif;
+      color:var(--text);
+      text-align:center;
+      background:
+        radial-gradient(1200px 600px at 10% -10%, rgba(124,58,237,.35), transparent),
+        radial-gradient(1000px 600px at 110% 10%, rgba(6,182,212,.28), transparent),
+        linear-gradient(180deg,var(--bg1),var(--bg2));
+    }
+
+    header {
+      background:linear-gradient(90deg,var(--brand1),var(--brand2));
+      padding:18px;
+      font-size:28px;
+      font-weight:800;
+      color:white;
+    }
+
+    /* ---------- STATUS BLOCK ---------- */
+    #status-box {
+      margin:18px auto;
+      padding:16px 40px;
+      border-radius:18px;
+      font-size:22px;
+      font-weight:800;
+      width:fit-content;
+      background:#475569;
+      color:white;
+      box-shadow:0 10px 30px rgba(0,0,0,.4);
+    }
+
+    .status-normal { background:var(--normal); }
+    .status-medium { background:var(--medium); color:#000; }
+    .status-critical { background:var(--critical); color:#000; }
+
+    /* ---------- CHARTS ---------- */
+    .charts-container {
+      display:flex;
+      justify-content:center;
+      flex-wrap:wrap;
+      gap:20px;
+      margin-top:20px;
+    }
+
+    .chart {
+      width:360px;
+      height:320px;
+      background:#0b1220;
+      border-radius:16px;
+      padding:10px;
+      box-shadow:0 20px 40px rgba(0,0,0,.6);
+    }
+
+    table {
+      width:94%;
+      margin:20px auto;
+      border-collapse:collapse;
+      background:rgba(255,255,255,.06);
+    }
+
+    th, td {
+      padding:12px;
+      border-bottom:1px solid rgba(255,255,255,.1);
+    }
+
+    th {
+      background:linear-gradient(135deg,var(--brand1),var(--brand2));
+    }
+
+    #xai-panel {
+      width:60%;
+      margin:16px auto;
+      padding:14px;
+      border-radius:14px;
+      background:rgba(255,255,255,.08);
+    }
+
+    /* ---------- BLINK OVERLAY (FIX) ---------- */
+    #blink-overlay {
+      position:fixed;
+      inset:0;
+      pointer-events:none;
+      z-index:999;
+      opacity:0;
+    }
+
+    .blink-normal #blink-overlay {
+      animation:blinkGreen 2s;
+    }
+    .blink-medium #blink-overlay {
+      animation:blinkYellow 2s;
+    }
+    .blink-critical #blink-overlay {
+      animation:blinkRed 4s;
+    }
+
+    @keyframes blinkGreen {
+      50% { background:rgba(34,197,94,.35); opacity:1; }
+    }
+    @keyframes blinkYellow {
+      50% { background:rgba(250,204,21,.35); opacity:1; }
+    }
+    @keyframes blinkRed {
+      50% { background:rgba(252,165,165,.45); opacity:1; }
+    }
+  </style>
+</head>
+
+<body>
+
+<div id="blink-overlay"></div>
+
+<header>⚙️ Industrial Digital Twin Dashboard</header>
+
+<div style="position:absolute;top:22px;right:30px;">
+  <a href="/readings"
+     style="color:white;font-weight:700;text-decoration:none;
+            background:rgba(0,0,0,0.25);
+            padding:8px 16px;border-radius:18px;">
+     📊 Stored Readings
+  </a>
+</div>
+
+<div id="status-box">CONNECTING...</div>
+
+<div class="charts-container">
+  <div id="tempChart" class="chart"></div>
+  <div id="pressureChart" class="chart"></div>
+  <div id="vibrationChart" class="chart"></div>
+</div>
+
+<h3>🧠 AI Explainability Panel</h3>
+<div id="xai-panel">Waiting for AI explanation...</div>
+
+<h3>📊 Live Sensor Readings</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Time</th>
+      <th>Temperature</th>
+      <th>Pressure</th>
+      <th>Vibration</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody id="table"></tbody>
+</table>
+
+<audio id="siren">
+  <source src="{{ url_for('static', filename='sound1.mp3') }}">
+</audio>
+
+<script>
+  const socket = io();
+  const statusBox = document.getElementById("status-box");
+  const tableBody = document.getElementById("table");
+  const xaiPanel = document.getElementById("xai-panel");
+  const siren = document.getElementById("siren");
+
+  const darkLayout = title => ({
+    title,
+    paper_bgcolor:"#0b1220",
+    plot_bgcolor:"#0b1220",
+    font:{color:"#e2e8f0"},
+    xaxis:{gridcolor:"#1e293b"},
+    yaxis:{gridcolor:"#1e293b"}
+  });
+
+  Plotly.newPlot("tempChart", [{x:[],y:[],mode:"lines+markers"}], darkLayout("Temperature"));
+  Plotly.newPlot("pressureChart", [{x:[],y:[],mode:"lines+markers"}], darkLayout("Pressure"));
+  Plotly.newPlot("vibrationChart", [{x:[],y:[],mode:"lines+markers"}], darkLayout("Vibration"));
+
+  socket.on("sensor_reading", data => {
+    const now = new Date().toLocaleTimeString();
+
+    Plotly.extendTraces("tempChart",{x:[[now]],y:[[data.reading.temp]]},[0],10);
+    Plotly.extendTraces("pressureChart",{x:[[now]],y:[[data.reading.pressure]]},[0],10);
+    Plotly.extendTraces("vibrationChart",{x:[[now]],y:[[data.reading.vibration]]},[0],10);
+
+    tableBody.insertAdjacentHTML("afterbegin",
+      `<tr>
+        <td>${now}</td>
+        <td>${data.reading.temp}</td>
+        <td>${data.reading.pressure}</td>
+        <td>${data.reading.vibration}</td>
+        <td>${data.hazard_level}</td>
+      </tr>`
+    );
+
+    document.body.classList.remove("blink-normal","blink-medium","blink-critical");
+    statusBox.className = "";
+
+    if (data.hazard_level === "NORMAL") {
+      statusBox.textContent = "NORMAL";
+      statusBox.classList.add("status-normal");
+      document.body.classList.add("blink-normal");
+    } else if (data.hazard_level === "MEDIUM") {
+      statusBox.textContent = "MEDIUM";
+      statusBox.classList.add("status-medium");
+      document.body.classList.add("blink-medium");
+    } else {
+      statusBox.textContent = "CRITICAL";
+      statusBox.classList.add("status-critical");
+      document.body.classList.add("blink-critical");
+      siren.play();
+    }
+
+    xaiPanel.innerHTML =
+      "<b>Top AI Factors:</b><br>" +
+      data.explanation.map(e => `• ${e[0]} : ${Number(e[1]).toFixed(3)}`).join("<br>");
+  });
+</script>
+</body>
+</html>
